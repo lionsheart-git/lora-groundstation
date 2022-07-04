@@ -1,3 +1,6 @@
+# CLion files
+/.idea/
+
 # Platformio files
 .pio/
 CMakeListsPrivate.txt
