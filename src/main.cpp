@@ -6,6 +6,8 @@
 #define LORA_DEFAULT_DIO1_PIN   33
 #define LORA_DEFAULT_DIO2_PIN   32
 
+#define MAX_BYTE_LORA 64
+
 #include "heltec.h"
 #include "images.hpp"
 
@@ -13,12 +15,12 @@
 
 unsigned int counter = 0;
 
-SX1276 radio = new Module(LORA_DEFAULT_SS_PIN,LORA_DEFAULT_RESET_PIN, LORA_DEFAULT_DIO0_PIN, LORA_DEFAULT_DIO1_PIN);
+SX1276 radio = new Module(LORA_DEFAULT_SS_PIN, LORA_DEFAULT_RESET_PIN, LORA_DEFAULT_DIO0_PIN, LORA_DEFAULT_DIO1_PIN);
+uint8_t new_package [MAX_BYTE_LORA];
 
-void logo()
-{
+void logo() {
     Heltec.display->clear();
-    Heltec.display->drawXbm(0,5,logo_width,logo_height,logo_bits);
+    Heltec.display->drawXbm(0, 5, logo_width, logo_height, logo_bits);
     Heltec.display->display();
 }
 
@@ -35,10 +37,10 @@ volatile bool enableInterrupt = true;
 #if defined(ESP8266) || defined(ESP32)
 ICACHE_RAM_ATTR
 #endif
+
 void setFlag() {
-    Serial.println("Exectued interrrupt!");
     // check if the interrupt is enabled
-    if(!enableInterrupt) {
+    if (!enableInterrupt) {
         return;
     }
 
@@ -47,11 +49,13 @@ void setFlag() {
 }
 
 void InitLoRa() {
-    SPI.begin(SCK,MISO,MOSI,SS);
+    SPI.begin(SCK, MISO, MOSI, SS);
 
     // initialize SX1278 with default settings
     Serial.print(F("[SX1276] Initializing ... "));
-    int state = radio.begin(868.0, 125.0, 9, 7, RADIOLIB_SX127X_SYNC_WORD, 10, 8, 0);
+
+    int state = radio.begin(868.0, 125.0, 7, 5, 0x12);
+    radio.setCRC(true);
 
     if (state == RADIOLIB_ERR_NONE) {
         Serial.println(F("success!"));
@@ -60,6 +64,8 @@ void InitLoRa() {
         Serial.println(state);
         while (true);
     }
+
+    radio.setDio0Action(setFlag, 0);
 
     // set the function that will be called
     // when new packet is received
@@ -77,10 +83,12 @@ void InitLoRa() {
     }
 }
 
-void setup()
-{
+void setup() {
     //WIFI Kit series V1 not support Vext control
-    Heltec.begin(true /*DisplayEnable Enable*/, false /*Heltec.Heltec.Heltec.LoRa Disable*/, true /*Serial Enable*/, true /*PABOOST Enable*/);
+    Heltec.begin(true /*DisplayEnable Enable*/,
+                 false /*Heltec.Heltec.Heltec.LoRa Disable*/,
+                 true /*Serial Enable*/,
+                 true /*PABOOST Enable*/);
 
     Heltec.display->init();
     Heltec.display->flipScreenVertically();
@@ -97,14 +105,10 @@ void setup()
     delay(1000);
 }
 
-String str;
-
-void loop()
-{
+void loop() {
 
     // check if the flag is set
-    if(receivedFlag)
-    {
+    if (receivedFlag) {
         // disable the interrupt service routine while
         // processing the data
         enableInterrupt = false;
@@ -120,60 +124,42 @@ void loop()
         Heltec.display->drawString(100, 0, String(counter));
         Heltec.display->display();
 
-        Serial.print(F("[SX1276] Waiting for incoming transmission ... "));
-
+        uint8_t buf[RADIOLIB_SX127X_MAX_PACKET_LENGTH];
+        size_t len = sizeof(buf);
         // you can receive data as an Arduino String
         // NOTE: receive() is a blocking method!
         //       See example ReceiveInterrupt for details
         //       on non-blocking reception method.
-        int state = radio.receive(str);
 
-        // you can also receive data as byte array
-        /*
-          byte byteArr[8];
-          int state = radio.receive(byteArr, 8);
-        */
+        int state = radio.receive(buf, len);
 
-        if (state == RADIOLIB_ERR_NONE)
-        {
+        if (state == RADIOLIB_ERR_NONE) {
             counter++;
             // packet was successfully received
-            Serial.println("success!");
 
             // print the data of the packet
-            Serial.print("[SX1276] Data:\t\t\t");
-            Serial.println(str);
+            for(int i=0; i<MAX_BYTE_LORA; i++){
+                new_package[i] = buf[i];
+            }
 
-            // print the RSSI (Received Signal Strength Indicator)
-            // of the last received packet
-            Serial.print(F("[SX1276] RSSI:\t\t\t"));
-            Serial.print(radio.getRSSI());
-            Serial.println(F(" dBm"));
+            int16_t RSSI_LoRa = radio.getRSSI();
 
-            // print the SNR (Signal-to-Noise Ratio)
-            // of the last received packet
-            Serial.print(F("[SX1276] SNR:\t\t\t"));
-            Serial.print(radio.getSNR());
-            Serial.println(F(" dB"));
+            // sends data via USB
+            Serial.write(new_package, sizeof(new_package));
+            Serial.write(RSSI_LoRa & 0xFF);
+            Serial.write(RSSI_LoRa >> 8);
 
-            // print frequency error
-            // of the last received packet
-            Serial.print(F("[SX1276] Frequency error:\t"));
-            Serial.print(radio.getFrequencyError());
-            Serial.println(F(" Hz"));
+            Serial.println();
 
-        } else if (state == RADIOLIB_ERR_RX_TIMEOUT)
-        {
+        } else if (state == RADIOLIB_ERR_RX_TIMEOUT) {
             // timeout occurred while waiting for a packet
             Serial.println(F("timeout!"));
 
-        } else if (state == RADIOLIB_ERR_CRC_MISMATCH)
-        {
+        } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
             // packet was received, but is malformed
             Serial.println(F("CRC error!"));
 
-        } else
-        {
+        } else {
             // some other error occurred
             Serial.print(F("failed, code "));
             Serial.println(state);
@@ -184,6 +170,4 @@ void loop()
 
         enableInterrupt = true;
     }
-
-    delay(500);
 }
